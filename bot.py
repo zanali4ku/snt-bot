@@ -11,6 +11,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from datetime import datetime, timedelta
+from collections import defaultdict  # для админского экспорта
 
 # Настройка локального хранилища
 STORAGE_DIR = Path("local_storage")
@@ -37,6 +38,10 @@ class AdminEditStates(StatesGroup):
     # Состояния для удаления пользователя
     select_user_for_delete = State()
     confirm_delete_user = State()
+    
+    # Состояния для добавления показания админом
+    add_reading_user_id = State()
+    add_reading_value = State()
 
 # Состояния для регистрации
 class RegistrationStates(StatesGroup):
@@ -417,9 +422,17 @@ async def notify_all_users(bot: Bot, db: Database):
     
     print(f"Оповещение пользователей завершено. Успешно: {success_count}, не удалось: {fail_count}")
 
+def get_main_keyboard():
+    """Главное меню с кнопками"""
+    keyboard = [
+        [types.KeyboardButton(text="📋 История показаний")],
+        [types.KeyboardButton(text="💳 Инструкция по оплате")],
+    ]
+    return types.ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
+
 async def main():
     db = Database()
-    bot = Bot(token='7823293404:AAH61k_6YEcvSLuFkCfpjKtCpFcoNLydWOo')  # ⚠️ ЗАМЕНИТЕ НА СВОЙ ТОКЕН!
+    bot = Bot(token='7823293404:AAH61k_6YEcvSLuFkCfpjKtCpFcoNLydWOo')  # ⚠️ актуальный токен
     dp = Dispatcher(storage=MemoryStorage())
     admin_filter = IsAdminFilter()
 
@@ -459,17 +472,15 @@ async def main():
     @dp.message(Command("start"))
     async def start(message: types.Message):
         await message.answer(
-            "Добро пожаловать! Отправьте показания счетчика или используйте команды:\n"
-            "/register - Регистрация\n"
-            "/history - История показаний\n"
-            "/full_history - Полная история (экспорт в файл)"
+            "Добро пожаловать! Отправьте показания счетчика или используйте кнопки ниже:",
+            reply_markup=get_main_keyboard()
         )
 
     @dp.message(Command("register"))
     async def register_start(message: types.Message, state: FSMContext):
         user_id = message.from_user.id
         if db.user_exists(user_id):
-            await message.answer("Вы уже зарегистрированы!")
+            await message.answer("Вы уже зарегистрированы!", reply_markup=get_main_keyboard())
             return
         
         await message.answer(
@@ -531,7 +542,8 @@ async def main():
                 f"ФИО: {full_name}\n"
                 f"Улица: {street}\n"
                 f"Участок: {plot_number}\n\n"
-                "Теперь вы можете отправлять показания счетчика, просто введя число."
+                "Теперь вы можете отправлять показания счетчика, просто введя число.",
+                reply_markup=get_main_keyboard()
             )
         else:
             await message.answer("❌ Произошла ошибка при регистрации. Пожалуйста, попробуйте позже.")
@@ -542,13 +554,13 @@ async def main():
     async def show_history(message: types.Message):
         user = db.get_user_by_id(message.from_user.id)
         if not user:
-            await message.answer("Сначала зарегистрируйтесь командой /register")
+            await message.answer("Сначала зарегистрируйтесь командой /register", reply_markup=get_main_keyboard())
             return
         
         readings = db.get_user_readings(message.from_user.id, limit=10)
         
         if not readings:
-            await message.answer("У вас пока нет сохраненных показаний")
+            await message.answer("У вас пока нет сохраненных показаний", reply_markup=get_main_keyboard())
             return
         
         response = "📋 Ваша история показаний:\n\n"
@@ -559,19 +571,19 @@ async def main():
         if last_reading:
             response += f"\nПоследнее показание: {last_reading[0]} кВт·ч ({last_reading[1]})"
         
-        await message.answer(response)
+        await message.answer(response, reply_markup=get_main_keyboard())
 
     @dp.message(Command("full_history"))
     async def show_full_history(message: types.Message):
         user = db.get_user_by_id(message.from_user.id)
         if not user:
-            await message.answer("Сначала зарегистрируйтесь командой /register")
+            await message.answer("Сначала зарегистрируйтесь командой /register", reply_markup=get_main_keyboard())
             return
         
         readings = db.get_user_readings(message.from_user.id)
         
         if not readings:
-            await message.answer("У вас пока нет сохраненных показаний")
+            await message.answer("У вас пока нет сохраненных показаний", reply_markup=get_main_keyboard())
             return
         
         if len(readings) > 15:
@@ -581,7 +593,8 @@ async def main():
             
             await message.answer_document(
                 FSInputFile(filename),
-                caption="📊 Полная история ваших показаний"
+                caption="📊 Полная история ваших показаний",
+                reply_markup=get_main_keyboard()
             )
             
             os.remove(filename)
@@ -590,32 +603,56 @@ async def main():
             for idx, (value, date) in enumerate(readings, 1):
                 response += f"{idx}. {value} кВт·ч - {date}\n"
             
-            await message.answer(response)
+            await message.answer(response, reply_markup=get_main_keyboard())
 
     @dp.message(Command("export"))
     async def export_data(message: types.Message):
         try:
             user = db.get_user_by_id(message.from_user.id)
             if not user:
-                await message.answer("Сначала зарегистрируйтесь командой /register")
+                await message.answer("Сначала зарегистрируйтесь командой /register", reply_markup=get_main_keyboard())
                 return
             
             data = db.get_user_readings_for_export(message.from_user.id)
-            
             if not data:
-                await message.answer("У вас нет сохраненных показаний для экспорта")
+                await message.answer("У вас нет сохраненных показаний для экспорта", reply_markup=get_main_keyboard())
                 return
             
-            df = pd.DataFrame(data, columns=["ФИО", "Участок", "Улица", "Показание", "Дата"])
+            # data приходит в порядке от новых к старым (DESC)
+            # развернём для удобства вычисления разницы
+            data_rev = list(reversed(data))  # теперь от старых к новым
+            
+            rows = []
+            prev_value = None
+            for full_name, plot_number, street, value, date in data_rev:
+                if prev_value is None:
+                    diff = "—"
+                else:
+                    diff = round(value - prev_value, 2)
+                rows.append({
+                    "ФИО": full_name,
+                    "Улица": street,
+                    "Участок": plot_number,
+                    "Показание (кВт·ч)": value,
+                    "Разница (кВт·ч)": diff,
+                    "Дата": date
+                })
+                prev_value = value
+            
+            # Снова переворачиваем, чтобы в файле были от новых к старым
+            rows.reverse()
+            
+            df = pd.DataFrame(rows)
             filename = f"показания_{message.from_user.id}.xlsx"
             df.to_excel(filename, index=False)
             
             await message.answer_document(
                 FSInputFile(filename),
-                caption="📊 Ваши показания"
+                caption="📊 Ваши показания (с разницей)",
+                reply_markup=get_main_keyboard()
             )
         except Exception as e:
-            await message.answer(f"❌ Ошибка при экспорте: {str(e)}")
+            await message.answer(f"❌ Ошибка при экспорте: {str(e)}", reply_markup=get_main_keyboard())
         finally:
             if 'filename' in locals() and os.path.exists(filename):
                 os.remove(filename)
@@ -624,21 +661,52 @@ async def main():
     async def admin_export(message: types.Message):
         try:
             data = db.get_all_readings()
-            
             if not data:
-                await message.answer("Нет данных для экспорта")
+                await message.answer("Нет данных для экспорта", reply_markup=get_main_keyboard())
                 return
             
-            df = pd.DataFrame(data, columns=["ID", "ФИО", "Участок", "Улица", "Показание", "Дата"])
-            filename = "все_показания.xlsx"
+            # Группируем показания по пользователям
+            user_readings = defaultdict(list)
+            for user_id, full_name, plot_number, street, value, date in data:
+                user_readings[user_id].append({
+                    "full_name": full_name,
+                    "plot_number": plot_number,
+                    "street": street,
+                    "value": value,
+                    "date": date
+                })
+            
+            rows = []
+            for uid, readings in user_readings.items():
+                # Сортируем показания по дате (от старых к новым)
+                readings_sorted = sorted(readings, key=lambda x: x["date"])
+                prev_value = None
+                for r in readings_sorted:
+                    diff = "—" if prev_value is None else round(r["value"] - prev_value, 2)
+                    rows.append({
+                        "ФИО": r["full_name"],
+                        "Улица": r["street"],
+                        "Участок": r["plot_number"],
+                        "Показание (кВт·ч)": r["value"],
+                        "Разница (кВт·ч)": diff,
+                        "Дата": r["date"]
+                    })
+                    prev_value = r["value"]
+            
+            # Сортируем итоговые строки по убыванию даты (сначала новые)
+            rows.sort(key=lambda x: x["Дата"], reverse=True)
+            
+            df = pd.DataFrame(rows)
+            filename = "все_показания_с_разницей.xlsx"
             df.to_excel(filename, index=False)
             
             await message.answer_document(
                 FSInputFile(filename),
-                caption="📊 Все показания пользователей"
+                caption="📊 Все показания пользователей (с разницей)",
+                reply_markup=get_main_keyboard()
             )
         except Exception as e:
-            await message.answer(f"❌ Ошибка выгрузки: {str(e)}")
+            await message.answer(f"❌ Ошибка выгрузки: {str(e)}", reply_markup=get_main_keyboard())
         finally:
             if 'filename' in locals() and os.path.exists(filename):
                 os.remove(filename)
@@ -648,13 +716,14 @@ async def main():
         db.set_global_reminder_status(True)
         await message.answer(
             f"🔔 Глобальные напоминания включены!\n"
-            f"Напоминания будут отправляться {db.get_reminder_day()} числа каждого месяца"
+            f"Напоминания будут отправляться {db.get_reminder_day()} числа каждого месяца",
+            reply_markup=get_main_keyboard()
         )
 
     @dp.message(Command("remind_off"), admin_filter)
     async def disable_reminders(message: types.Message):
         db.set_global_reminder_status(False)
-        await message.answer("🔕 Глобальные напоминания отключены!")
+        await message.answer("🔕 Глобальные напоминания отключены!", reply_markup=get_main_keyboard())
 
     @dp.message(Command("remind_status"), admin_filter)
     async def reminder_status(message: types.Message):
@@ -663,7 +732,8 @@ async def main():
         await message.answer(
             f"ℹ️ Статус напоминаний:\n"
             f"• Состояние: {status}\n"
-            f"• День месяца: {day}"
+            f"• День месяца: {day}",
+            reply_markup=get_main_keyboard()
         )
 
     @dp.message(Command("set_remind_day"), admin_filter)
@@ -675,16 +745,17 @@ async def main():
             
             day = int(args[1])
             if not 1 <= day <= 28:
-                await message.answer("❌ День должен быть от 1 до 28")
+                await message.answer("❌ День должен быть от 1 до 28", reply_markup=get_main_keyboard())
                 return
             
             db.set_reminder_day(day)
             await message.answer(
                 f"📅 День напоминания установлен на {day} число каждого месяца\n"
-                f"Следующее напоминание: {day}.{datetime.now().month + 1 if datetime.now().day >= day else datetime.now().month}.{datetime.now().year}"
+                f"Следующее напоминание: {day}.{datetime.now().month + 1 if datetime.now().day >= day else datetime.now().month}.{datetime.now().year}",
+                reply_markup=get_main_keyboard()
             )
         except (ValueError, IndexError):
-            await message.answer("❌ Используйте: /set_remind_day <число от 1 до 28>")
+            await message.answer("❌ Используйте: /set_remind_day <число от 1 до 28>", reply_markup=get_main_keyboard())
 
     @dp.message(Command("admin_edit"), admin_filter)
     async def admin_edit_start(message: types.Message, state: FSMContext):
@@ -708,7 +779,7 @@ async def main():
             users = db.search_users(search_term)
         
         if not users:
-            await message.answer("Пользователь не найден")
+            await message.answer("Пользователь не найден", reply_markup=get_main_keyboard())
             await state.clear()
             return
         
@@ -717,7 +788,7 @@ async def main():
             readings = db.get_user_readings_with_ids(user_id)
             
             if not readings:
-                await message.answer(f"У пользователя {users[0][1]} нет показаний")
+                await message.answer(f"У пользователя {users[0][1]} нет показаний", reply_markup=get_main_keyboard())
                 await state.clear()
                 return
                 
@@ -745,7 +816,7 @@ async def main():
         
         reading = db.get_reading_by_id(reading_id)
         if not reading or (user_id and reading[3] != user_id):
-            await message.answer("Показание с таким ID не найдено")
+            await message.answer("Показание с таким ID не найдено", reply_markup=get_main_keyboard())
             await state.clear()
             return
         
@@ -773,7 +844,8 @@ async def main():
             f"ID: {reading_id}\n"
             f"Пользователь: {reading[4]}\n"
             f"Старое значение: {old_value} кВт·ч\n"
-            f"Новое значение: {new_value} кВт·ч"
+            f"Новое значение: {new_value} кВт·ч",
+            reply_markup=get_main_keyboard()
         )
         await state.clear()
 
@@ -788,7 +860,7 @@ async def main():
     @dp.message(Command("cancel_edit"), admin_filter)
     async def cancel_edit(message: types.Message, state: FSMContext):
         await state.clear()
-        await message.answer("Редактирование отменено")
+        await message.answer("Редактирование отменено", reply_markup=get_main_keyboard())
 
     @dp.message(Command("admin_edit_user"), admin_filter)
     async def admin_edit_user_start(message: types.Message, state: FSMContext):
@@ -812,7 +884,7 @@ async def main():
             users = db.search_users(search_term)
         
         if not users:
-            await message.answer("❌ Пользователь не найден")
+            await message.answer("❌ Пользователь не найден", reply_markup=get_main_keyboard())
             await state.clear()
             return
         
@@ -843,7 +915,7 @@ async def main():
         user = db.get_user_by_id(user_id)
         
         if not user:
-            await message.answer("❌ Пользователь не найден")
+            await message.answer("❌ Пользователь не найден", reply_markup=get_main_keyboard())
             await state.clear()
             return
         
@@ -901,14 +973,14 @@ async def main():
         try:
             args = message.text.split()
             if len(args) < 2:
-                await message.answer("Используйте: /admin_view_user <ID пользователя>")
+                await message.answer("Используйте: /admin_view_user <ID пользователя>", reply_markup=get_main_keyboard())
                 return
             
             user_id = int(args[1])
             user = db.get_user_by_id(user_id)
             
             if not user:
-                await message.answer("Пользователь не найден")
+                await message.answer("Пользователь не найден", reply_markup=get_main_keyboard())
                 return
             
             readings = db.get_user_readings(user_id, limit=3)
@@ -920,17 +992,18 @@ async def main():
                 f"ФИО: {user[1]}\n"
                 f"Участок: {user[2]}\n"
                 f"Улица: {user[3]}\n\n"
-                f"Последние показания:\n{readings_text if readings else 'Нет показаний'}"
+                f"Последние показания:\n{readings_text if readings else 'Нет показаний'}",
+                reply_markup=get_main_keyboard()
             )
         except (ValueError, IndexError):
-            await message.answer("Используйте: /admin_view_user <ID пользователя>")
+            await message.answer("Используйте: /admin_view_user <ID пользователя>", reply_markup=get_main_keyboard())
 
     @dp.message(Command("admin_list_users"), admin_filter)
     async def admin_list_users(message: types.Message):
         users = db.get_all_users()
         
         if not users:
-            await message.answer("Нет зарегистрированных пользователей")
+            await message.answer("Нет зарегистрированных пользователей", reply_markup=get_main_keyboard())
             return
         
         response = "📋 Список пользователей:\n\n"
@@ -939,9 +1012,9 @@ async def main():
         
         if len(response) > 4000:
             for x in range(0, len(response), 4000):
-                await message.answer(response[x:x+4000])
+                await message.answer(response[x:x+4000], reply_markup=get_main_keyboard())
         else:
-            await message.answer(response)
+            await message.answer(response, reply_markup=get_main_keyboard())
 
     # ==================== ИСПРАВЛЕННЫЙ БЛОК (4 шага) ====================
     @dp.message(Command("admin_add_user"), admin_filter)
@@ -1002,10 +1075,11 @@ async def main():
                 f"ID: {user_id}\n"
                 f"ФИО: {full_name}\n"
                 f"Участок: {plot_number}\n"
-                f"Улица: {street}"
+                f"Улица: {street}",
+                reply_markup=get_main_keyboard()
             )
         else:
-            await message.answer("❌ Ошибка при добавлении пользователя")
+            await message.answer("❌ Ошибка при добавлении пользователя", reply_markup=get_main_keyboard())
         
         await state.clear()
     # ==================== КОНЕЦ ИСПРАВЛЕННОГО БЛОКА ====================
@@ -1032,7 +1106,7 @@ async def main():
             users = db.search_users(search_term)
         
         if not users:
-            await message.answer("❌ Пользователь не найден")
+            await message.answer("❌ Пользователь не найден", reply_markup=get_main_keyboard())
             await state.clear()
             return
         
@@ -1087,23 +1161,121 @@ async def main():
                 f"ФИО: {user[1]}\n"
                 f"Участок: {user[2]}\n"
                 f"Улица: {user[3]}",
-                reply_markup=types.ReplyKeyboardRemove()
+                reply_markup=get_main_keyboard()
             )
         else:
-            await message.answer("❌ Ошибка при удалении пользователя", reply_markup=types.ReplyKeyboardRemove())
+            await message.answer("❌ Ошибка при удалении пользователя", reply_markup=get_main_keyboard())
         
         await state.clear()
 
     @dp.message(AdminEditStates.confirm_delete_user, F.text.casefold() == "отменить", admin_filter)
     async def admin_delete_user_cancel(message: types.Message, state: FSMContext):
         await state.clear()
-        await message.answer("❌ Удаление отменено", reply_markup=types.ReplyKeyboardRemove())
+        await message.answer("❌ Удаление отменено", reply_markup=get_main_keyboard())
+
+    # ==================== ДОБАВЛЕНИЕ ПОКАЗАНИЙ АДМИНИСТРАТОРОМ ====================
+    @dp.message(Command("admin_add_reading"), admin_filter)
+    async def admin_add_reading_start(message: types.Message, state: FSMContext):
+        await message.answer(
+            "Введите ID пользователя, для которого хотите добавить показание:",
+            reply_markup=types.ReplyKeyboardRemove()
+        )
+        await state.set_state(AdminEditStates.add_reading_user_id)
+
+    @dp.message(AdminEditStates.add_reading_user_id, F.text.regexp(r'^\d+$'), admin_filter)
+    async def admin_add_reading_get_user(message: types.Message, state: FSMContext):
+        user_id = int(message.text)
+        user = db.get_user_by_id(user_id)
+        if not user:
+            await message.answer("❌ Пользователь с таким ID не найден. Попробуйте ещё раз или /cancel_edit для отмены.")
+            return
+        await state.update_data(target_user_id=user_id, target_user_name=user[1])
+        await message.answer(
+            f"Пользователь: {user[1]} (уч.{user[2]}, ул.{user[3]})\n"
+            "Введите новое показание (число в кВт·ч):"
+        )
+        await state.set_state(AdminEditStates.add_reading_value)
+
+    @dp.message(AdminEditStates.add_reading_value, F.text.regexp(r'^\d+\.?\d*$'), admin_filter)
+    async def admin_add_reading_finish(message: types.Message, state: FSMContext):
+        data = await state.get_data()
+        user_id = data['target_user_id']
+        value = float(message.text)
+        try:
+            db.cursor.execute(
+                "INSERT INTO readings (user_id, value) VALUES (?, ?)",
+                (user_id, value)
+            )
+            db.conn.commit()
+            await message.answer(
+                f"✅ Показание {value} кВт·ч успешно добавлено для пользователя {data['target_user_name']} (ID {user_id}).",
+                reply_markup=get_main_keyboard()
+            )
+        except Exception as e:
+            await message.answer(f"❌ Ошибка при добавлении показания: {e}", reply_markup=get_main_keyboard())
+        finally:
+            await state.clear()
+
+    @dp.message(AdminEditStates.add_reading_user_id, admin_filter)
+    async def admin_add_reading_invalid_id(message: types.Message, state: FSMContext):
+        await message.answer("❌ ID должен быть числом. Попробуйте ещё раз или /cancel_edit для отмены.")
+
+    @dp.message(AdminEditStates.add_reading_value, admin_filter)
+    async def admin_add_reading_invalid_value(message: types.Message, state: FSMContext):
+        await message.answer("❌ Показание должно быть числом (можно с десятичной точкой). Попробуйте ещё раз или /cancel_edit для отмены.")
+    # ==================== КОНЕЦ БЛОКА ====================
+
+    # Обработчик кнопки "История показаний"
+    @dp.message(F.text == "📋 История показаний")
+    async def history_button_handler(message: types.Message):
+        user = db.get_user_by_id(message.from_user.id)
+        if not user:
+            await message.answer("Сначала зарегистрируйтесь командой /register", reply_markup=get_main_keyboard())
+            return
+        readings = db.get_user_readings(message.from_user.id, limit=10)
+        if not readings:
+            await message.answer("У вас пока нет сохраненных показаний", reply_markup=get_main_keyboard())
+            return
+        response = "📋 Ваша история показаний:\n\n"
+        for idx, (value, date) in enumerate(readings, 1):
+            response += f"{idx}. {value} кВт·ч - {date}\n"
+        last_reading = db.get_user_last_reading(message.from_user.id)
+        if last_reading:
+            response += f"\nПоследнее показание: {last_reading[0]} кВт·ч ({last_reading[1]})"
+        await message.answer(response, reply_markup=get_main_keyboard())
+
+    # Обработчик кнопки "Инструкция по оплате"
+    @dp.message(F.text == "💳 Инструкция по оплате")
+    async def payment_button_handler(message: types.Message):
+        text = (
+            "💳 **Уважаемые садоводы!**\n\n"
+            "Вы можете производить оплату членских взносов и за электроэнергию через **ПАО «ПРОМСВЯЗЬБАНК»** "
+            "на расчетный счет СНТ «Респиратор».\n\n"
+            "📌 **При заполнении платежа обязательно указывайте:**\n"
+            "• ФИО плательщика\n"
+            "• Номер участка\n"
+            "• Назначение взноса (членские / целевые / электроэнергия)\n"
+            "• Сумму и период оплаты\n"
+            "• При оплате за электроэнергию – начальные и конечные показания счётчика\n\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
+            "**РЕКВИЗИТЫ СЧЁТА:**\n"
+            "```\n"
+            "Садоводческое некоммерческое товарищество «Респиратор»\n"
+            "ИНН 9308021183\n"
+            "ОГРН 1229300156799\n"
+            "Р/с 40703810609300009078\n"
+            "БИК 044525555\n"
+            "```\n"
+            "После оплаты, пожалуйста, отправьте **скриншот или фото квитанции** в этот чат. "
+            "Администратор проверит поступление средств и отметит платеж."
+        )
+        await message.answer(text, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
     @dp.message(lambda m: m.text.replace('.', '').isdigit())
     async def save_reading(message: types.Message):
         user = db.get_user_by_id(message.from_user.id)
         if not user:
-            await message.answer("Сначала зарегистрируйтесь командой /register")
+            await message.answer("Сначала зарегистрируйтесь командой /register", reply_markup=get_main_keyboard())
             return
         
         try:
@@ -1111,7 +1283,7 @@ async def main():
             current_reading = float(message.text)
             
             if last_reading and current_reading <= last_reading[0]:
-                await message.answer(f"❌ Ошибка: показание должно быть больше последнего ({last_reading[0]} кВт·ч)")
+                await message.answer(f"❌ Ошибка: показание должно быть больше последнего ({last_reading[0]} кВт·ч)", reply_markup=get_main_keyboard())
                 return
             
             # Пытаемся сохранить в основную БД
@@ -1126,17 +1298,18 @@ async def main():
                 if LocalStorage.get_readings(message.from_user.id):
                     await sync_user_readings(bot, db, message.from_user.id)
                 
-                await message.answer(f"✅ Показание {current_reading} кВт·ч сохранено!")
+                await message.answer(f"✅ Показание {current_reading} кВт·ч сохранено!", reply_markup=get_main_keyboard())
             except sqlite3.Error as e:
                 # Если ошибка БД, сохраняем локально
                 print(f"Ошибка БД: {e}. Сохраняем локально.")
                 LocalStorage.save_reading(message.from_user.id, current_reading)
                 await message.answer(
                     f"⚠️ Сервер временно недоступен. Показание {current_reading} кВт·ч сохранено локально.\n"
-                    "Оно будет автоматически отправлено при восстановлении связи."
+                    "Оно будет автоматически отправлено при восстановлении связи.",
+                    reply_markup=get_main_keyboard()
                 )
         except Exception as e:
-            await message.answer("❌ Произошла ошибка при обработке показания")
+            await message.answer("❌ Произошла ошибка при обработке показания", reply_markup=get_main_keyboard())
             print(f"Ошибка в save_reading: {e}")
 
     try:
@@ -1149,5 +1322,4 @@ if __name__ == '__main__':
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-
         print("Бот остановлен")
