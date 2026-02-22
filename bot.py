@@ -11,7 +11,7 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from datetime import datetime, timedelta
-from collections import defaultdict  # для админского экспорта
+from collections import defaultdict
 
 # Настройка локального хранилища
 STORAGE_DIR = Path("local_storage")
@@ -664,42 +664,48 @@ async def main():
             if not data:
                 await message.answer("Нет данных для экспорта", reply_markup=get_main_keyboard())
                 return
-            
+
             # Группируем показания по пользователям
-            user_readings = defaultdict(list)
-            for user_id, full_name, plot_number, street, value, date in data:
-                user_readings[user_id].append({
-                    "full_name": full_name,
-                    "plot_number": plot_number,
-                    "street": street,
-                    "value": value,
-                    "date": date
-                })
-            
+            users_dict = {}
+            for row in data:
+                user_id, full_name, plot_number, street, value, date = row
+                if user_id not in users_dict:
+                    users_dict[user_id] = {
+                        "full_name": full_name,
+                        "plot_number": plot_number,
+                        "street": street,
+                        "readings": []
+                    }
+                users_dict[user_id]["readings"].append({"value": value, "date": date})
+
             rows = []
-            for uid, readings in user_readings.items():
-                # Сортируем показания по дате (от старых к новым)
-                readings_sorted = sorted(readings, key=lambda x: x["date"])
-                prev_value = None
+            for uid, info in users_dict.items():
+                # Сортируем показания пользователя по дате (от старых к новым)
+                readings_sorted = sorted(info["readings"], key=lambda x: x["date"])
+                prev_val = None
                 for r in readings_sorted:
-                    diff = "—" if prev_value is None else round(r["value"] - prev_value, 2)
+                    if prev_val is None:
+                        diff = "—"
+                    else:
+                        diff = round(r["value"] - prev_val, 2)   # потребление за период
                     rows.append({
-                        "ФИО": r["full_name"],
-                        "Улица": r["street"],
-                        "Участок": r["plot_number"],
+                        "ФИО": info["full_name"],
+                        "Улица": info["street"],
+                        "Участок": info["plot_number"],
                         "Показание (кВт·ч)": r["value"],
                         "Разница (кВт·ч)": diff,
                         "Дата": r["date"]
                     })
-                    prev_value = r["value"]
-            
-            # Сортируем итоговые строки по убыванию даты (сначала новые)
+                    prev_val = r["value"]
+
+            # Сортируем все строки по убыванию даты (сначала новые)
             rows.sort(key=lambda x: x["Дата"], reverse=True)
-            
+
+            # Создаём DataFrame и сохраняем
             df = pd.DataFrame(rows)
             filename = "все_показания_с_разницей.xlsx"
             df.to_excel(filename, index=False)
-            
+
             await message.answer_document(
                 FSInputFile(filename),
                 caption="📊 Все показания пользователей (с разницей)",
@@ -1249,15 +1255,15 @@ async def main():
     async def payment_button_handler(message: types.Message):
         text = (
             "💳 **Уважаемые садоводы!**\n\n"
-            "Вы можете производить оплату за электроэнергию через **ПАО «ПРОМСВЯЗЬБАНК»** "
+            "Вы можете производить оплату членских взносов и за электроэнергию через **ПАО «ПРОМСВЯЗЬБАНК»** "
             "на расчетный счет СНТ «Респиратор».\n\n"
             "📌 **При заполнении платежа обязательно указывайте:**\n"
             "• ФИО плательщика\n"
             "• Номер участка\n"
-            "• Назначение взноса (электроэнергия)\n"
+            "• Назначение взноса (членские / целевые / электроэнергия)\n"
             "• Сумму и период оплаты\n"
             "• При оплате за электроэнергию – начальные и конечные показания счётчика\n\n"
-            "━━━━━━━━━━━━━━━\n"
+            "━━━━━━━━━━━━━━━━━━━━━\n"
             "**РЕКВИЗИТЫ СЧЁТА:**\n"
             "```\n"
             "Садоводческое некоммерческое товарищество «Респиратор»\n"
@@ -1265,7 +1271,7 @@ async def main():
             "ОГРН 1229300156799\n"
             "Р/с 40703810609300009078\n"
             "БИК 044525555\n"
-            "```\n"
+            "```"
         )
         await message.answer(text, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
@@ -1320,6 +1326,4 @@ if __name__ == '__main__':
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-
         print("Бот остановлен")
-
