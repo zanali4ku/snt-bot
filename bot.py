@@ -419,7 +419,7 @@ async def notify_all_users(bot: Bot, db: Database):
 
 async def main():
     db = Database()
-    bot = Bot(token='7823293404:AAH280GLmW5CZ8o1Deh19i4ohIALTYB-fhQ')  # ⚠️ ЗАМЕНИТЕ НА СВОЙ ТОКЕН!
+    bot = Bot(token='7823293404:AAH61k_6YEcvSLuFkCfpjKtCpFcoNLydWOo')  # ⚠️ ЗАМЕНИТЕ НА СВОЙ ТОКЕН!
     dp = Dispatcher(storage=MemoryStorage())
     admin_filter = IsAdminFilter()
 
@@ -1149,4 +1149,5 @@ if __name__ == '__main__':
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
+
         print("Бот остановлен")
