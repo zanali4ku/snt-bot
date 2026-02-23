@@ -33,7 +33,7 @@ class AdminEditStates(StatesGroup):
     add_user_full_name = State()
     add_user_plot_number = State()
     add_user_street = State()
-    add_user_street_name = State()  # Новое состояние для ввода улицы
+    add_user_street_name = State()
     
     # Состояния для удаления пользователя
     select_user_for_delete = State()
@@ -432,7 +432,7 @@ def get_main_keyboard():
 
 async def main():
     db = Database()
-    bot = Bot(token='7823293404:AAH61k_6YEcvSLuFkCfpjKtCpFcoNLydWOo')  # ⚠️ актуальный токен
+    bot = Bot(token='7823293404:AAH61k_6YEcvSLuFkCfpjKtCpFcoNLydWOo')  # актуальный токен
     dp = Dispatcher(storage=MemoryStorage())
     admin_filter = IsAdminFilter()
 
@@ -556,21 +556,25 @@ async def main():
         if not user:
             await message.answer("Сначала зарегистрируйтесь командой /register", reply_markup=get_main_keyboard())
             return
-        
+
         readings = db.get_user_readings(message.from_user.id, limit=10)
-        
         if not readings:
             await message.answer("У вас пока нет сохраненных показаний", reply_markup=get_main_keyboard())
             return
-        
+
         response = "📋 Ваша история показаний:\n\n"
-        for idx, (value, date) in enumerate(readings, 1):
-            response += f"{idx}. {value} кВт·ч - {date}\n"
-        
+        for i, (value, date) in enumerate(readings):
+            if i < len(readings) - 1:
+                next_value = readings[i+1][0]
+                diff = round(value - next_value, 2)
+                response += f"{i+1}. {value} кВт·ч - {date} (+{diff})\n"
+            else:
+                response += f"{i+1}. {value} кВт·ч - {date} (—)\n"
+
         last_reading = db.get_user_last_reading(message.from_user.id)
         if last_reading:
             response += f"\nПоследнее показание: {last_reading[0]} кВт·ч ({last_reading[1]})"
-        
+
         await message.answer(response, reply_markup=get_main_keyboard())
 
     @dp.message(Command("full_history"))
@@ -618,10 +622,7 @@ async def main():
                 await message.answer("У вас нет сохраненных показаний для экспорта", reply_markup=get_main_keyboard())
                 return
             
-            # data приходит в порядке от новых к старым (DESC)
-            # развернём для удобства вычисления разницы
-            data_rev = list(reversed(data))  # теперь от старых к новым
-            
+            data_rev = list(reversed(data))
             rows = []
             prev_value = None
             for full_name, plot_number, street, value, date in data_rev:
@@ -639,7 +640,6 @@ async def main():
                 })
                 prev_value = value
             
-            # Снова переворачиваем, чтобы в файле были от новых к старым
             rows.reverse()
             
             df = pd.DataFrame(rows)
@@ -665,7 +665,6 @@ async def main():
                 await message.answer("Нет данных для экспорта", reply_markup=get_main_keyboard())
                 return
 
-            # Группируем показания по пользователям
             users_dict = {}
             for row in data:
                 user_id, full_name, plot_number, street, value, date = row
@@ -680,14 +679,13 @@ async def main():
 
             rows = []
             for uid, info in users_dict.items():
-                # Сортируем показания пользователя по дате (от старых к новым)
                 readings_sorted = sorted(info["readings"], key=lambda x: x["date"])
                 prev_val = None
                 for r in readings_sorted:
                     if prev_val is None:
                         diff = "—"
                     else:
-                        diff = round(r["value"] - prev_val, 2)   # потребление за период
+                        diff = round(r["value"] - prev_val, 2)
                     rows.append({
                         "ФИО": info["full_name"],
                         "Улица": info["street"],
@@ -698,10 +696,8 @@ async def main():
                     })
                     prev_val = r["value"]
 
-            # Сортируем все строки по убыванию даты (сначала новые)
             rows.sort(key=lambda x: x["Дата"], reverse=True)
 
-            # Создаём DataFrame и сохраняем
             df = pd.DataFrame(rows)
             filename = "все_показания_с_разницей.xlsx"
             df.to_excel(filename, index=False)
@@ -1060,7 +1056,7 @@ async def main():
             return
         await state.update_data(plot_number=plot_number)
         await message.answer("Введите улицу нового пользователя:")
-        await state.set_state(AdminEditStates.add_user_street_name)  # Переходим в новое состояние для улицы
+        await state.set_state(AdminEditStates.add_user_street_name)
 
     @dp.message(AdminEditStates.add_user_street_name, admin_filter)
     async def admin_add_user_finish(message: types.Message, state: FSMContext):
@@ -1238,16 +1234,25 @@ async def main():
         if not user:
             await message.answer("Сначала зарегистрируйтесь командой /register", reply_markup=get_main_keyboard())
             return
+
         readings = db.get_user_readings(message.from_user.id, limit=10)
         if not readings:
             await message.answer("У вас пока нет сохраненных показаний", reply_markup=get_main_keyboard())
             return
+
         response = "📋 Ваша история показаний:\n\n"
-        for idx, (value, date) in enumerate(readings, 1):
-            response += f"{idx}. {value} кВт·ч - {date}\n"
+        for i, (value, date) in enumerate(readings):
+            if i < len(readings) - 1:
+                next_value = readings[i+1][0]
+                diff = round(value - next_value, 2)
+                response += f"{i+1}. {value} кВт·ч - {date} (+{diff})\n"
+            else:
+                response += f"{i+1}. {value} кВт·ч - {date} (—)\n"
+
         last_reading = db.get_user_last_reading(message.from_user.id)
         if last_reading:
             response += f"\nПоследнее показание: {last_reading[0]} кВт·ч ({last_reading[1]})"
+
         await message.answer(response, reply_markup=get_main_keyboard())
 
     # Обработчик кнопки "Инструкция по оплате"
